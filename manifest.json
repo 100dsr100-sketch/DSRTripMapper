@@ -1,5 +1,5 @@
 {
-  "id": "./",
+  "id": "/DSRTripMapper/",
   "name": "DSR Trip Mapper",
   "short_name": "DSR Trip Mapper",
   "description": "Maps a trip from your exported Google Timeline - each day in its own colour, km walked, driven and flown, PDF / JPEG export.",
