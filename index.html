@@ -7,6 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>DSR Trip Mapper</title>
+<script>/* 1f: the app now has its own address (separate storage + installs); the old shared github.io copy forwards there */
+if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-mapper.pages.dev/" + location.search + location.hash);</script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -61,7 +63,7 @@
 </style>
 </head>
 <body>
-<header><h1>DSR Trip Mapper</h1><span class="ver">1e</span></header>
+<header><h1>DSR Trip Mapper</h1><span class="ver">1f</span></header>
 <main>
   <div class="card">
     <h2>1 · Your Google Timeline</h2>
@@ -115,6 +117,6 @@
 </main>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="app.js?v=1e"></script>
+<script src="app.js?v=1f"></script>
 </body>
 </html>
