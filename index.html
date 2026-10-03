@@ -60,6 +60,7 @@ if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-ma
   .tripbar{display:flex;align-items:center;gap:12px;margin:0 0 10px}
   .tripbar .btn{flex:0 0 auto;padding:7px 14px}
   #tripTitle{color:var(--gold2);font-weight:700;font-size:16px}
+  .lockbtn{width:34px;height:34px;border-radius:8px;border:2px solid rgba(0,0,0,.25);background:#fff;font-size:17px;line-height:1;cursor:pointer;padding:0}
   .status{color:var(--gold2);font-size:13px;min-height:18px;margin-top:6px}
   .hidden{display:none!important}
   .leaflet-container{background:#cfd8dc}
@@ -67,7 +68,7 @@ if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-ma
 </style>
 </head>
 <body>
-<header><h1>DSR Trip Mapper</h1><span class="ver">1g</span></header>
+<header><h1>DSR Trip Mapper</h1><span class="ver">1h</span></header>
 <main>
   <div class="card pick">
     <h2>1 · Your Google Timeline</h2>
@@ -108,6 +109,7 @@ if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-ma
       <div class="row">
         <label>Format <select id="xFmt"><option value="pdf">PDF (map + summary)</option><option value="jpg">JPEG pictures</option></select></label>
         <label>Size <select id="xSize"><option value="mobile">Small - for phones</option><option value="a4">Large - A4 printing</option></select></label>
+        <label style="display:flex;align-items:center;gap:6px" id="xRegionsRow" class="hidden"><input type="checkbox" id="xRegions" checked> <span id="xRegionsLbl">Add a map of each country / area</span></label>
         <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="xDays"> Add a close-up map of each day</label>
         <button class="btn" id="bExport">Export</button>
         <button class="btn ghost hidden" id="bShare">Share…</button>
@@ -123,6 +125,6 @@ if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-ma
 </main>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="app.js?v=1g"></script>
+<script src="app.js?v=1h"></script>
 </body>
 </html>
