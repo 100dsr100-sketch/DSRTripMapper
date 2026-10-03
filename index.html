@@ -7,8 +7,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>DSR Trip Mapper</title>
-<script>/* 1f: the app now has its own address (separate storage + installs); the old shared github.io copy forwards there */
-if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-mapper.pages.dev/" + location.search + location.hash);</script>
+<script>/* the old shared github.io copy shows an "OLD COPY - moved" page (and can hand data over); see dsr-move.js */
+window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.dev/", ls: ["dsrtrip."], idb: ["dsrtripmapper"] };</script>
+<script src="dsr-move.js"></script>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -68,7 +69,7 @@ if (/github\.io$/.test(location.hostname)) location.replace("https://dsr-trip-ma
 </style>
 </head>
 <body>
-<header><h1>DSR Trip Mapper</h1><span class="ver">1h</span></header>
+<header><h1>DSR Trip Mapper</h1><span class="ver">1i</span></header>
 <main>
   <div class="card pick">
     <h2>1 · Your Google Timeline</h2>
