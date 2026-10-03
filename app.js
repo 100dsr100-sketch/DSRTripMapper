@@ -285,7 +285,7 @@ function renderTrips() {
       <span class="small dim">${range(t)} · ${t.days} day${t.days > 1 ? "s" : ""} · ${Math.round(t.km).toLocaleString()} km${t.flights ? ` · ${t.flights} flight${t.flights > 1 ? "s" : ""}` : ""}</span></button>`).join("") +
     `<div class="row" style="margin-top:8px">${list.length > tripsShown ? '<button class="btn ghost" id="tMore">Show more</button>' : ""}
       <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="tDay" ${showDayTrips ? "checked" : ""}> Include day trips</label></div>`;
-  box.querySelectorAll(".trip").forEach(b => b.onclick = () => { const t = TRIPS.trips[+b.dataset.i]; $("#dFrom").value = t.from; $("#dTo").value = t.to; mapTrip(); });
+  box.querySelectorAll(".trip").forEach(b => b.onclick = () => { const t = TRIPS.trips[+b.dataset.i]; $("#dFrom").value = t.from; $("#dTo").value = t.to; mapTrip(t.name); });
   if ($("#tMore")) $("#tMore").onclick = () => { tripsShown += 15; renderTrips(); };
   $("#tDay").onchange = e => { showDayTrips = e.target.checked; tripsShown = 15; renderTrips(); };
   // names, slowly (shared one-a-second lookups; the open trip's towns go first)
@@ -416,15 +416,15 @@ async function findTowns() {
   }
   status("");
 }
-async function mapTrip() {
+async function mapTrip(title) {
   const from = $("#dFrom").value, to = $("#dTo").value;
   if (!from || !to) return status("Choose the From and To dates.");
   if (to < from) return status("The To date is before the From date.");
   if (daysBetween(from, to) > 400) return status("That's over a year - choose up to 400 days.");
   TRIP = buildTrip(from, to);
   if (!TRIP.days.some(d => d.legs.length)) { status("No travel recorded between those dates."); $("#out").classList.add("hidden"); return; }
-  status(""); drawMap(); renderSummary();
-  $("#out").scrollIntoView({ behavior: "smooth" });
+  status(""); showTrip(typeof title === "string" ? title : "");
+  drawMap(); renderSummary();
   findTowns();
 }
 
@@ -589,7 +589,21 @@ function daysBetween(a, b) { return Math.round((Date.parse(b + "T12:00:00Z") - D
 function fmtDate(d) { return new Date(d + "T12:00:00Z").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); }
 function shortDate(d) { return new Date(d + "T12:00:00Z").toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }); }
 function fmtTime(t) { return new Date(t).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }); }
-function status(t) { $("#status").textContent = t; }
+function status(t) { $("#status").textContent = t; $("#status2").textContent = t; }
+/* 1g: while a trip is open, the import + trip list step aside; "‹ All trips" (or the phone's Back) brings them back */
+function showTrip(title) {
+  $("#tripTitle").textContent = title || "Your trip";
+  $("#tripDates").textContent = `${fmtDate(TRIP.from)} – ${fmtDate(TRIP.to)}`;
+  if (!document.body.classList.contains("viewing")) { document.body.classList.add("viewing"); history.pushState({ trip: 1 }, ""); }
+  window.scrollTo(0, 0);
+  if (map) setTimeout(() => map.invalidateSize(), 50);
+}
+function backToTrips() {
+  document.body.classList.remove("viewing"); $("#out").classList.add("hidden");
+  const sel = $("#trips"); if (sel) sel.scrollIntoView(); else window.scrollTo(0, 0);
+}
+$("#bBack").onclick = () => history.state?.trip ? history.back() : backToTrips();
+window.addEventListener("popstate", () => { if (document.body.classList.contains("viewing")) backToTrips(); });
 function toast(t) { status(t); setTimeout(() => { if ($("#status").textContent === t) status(""); }, 3000); }
 
 /* ======================= wiring ======================= */
