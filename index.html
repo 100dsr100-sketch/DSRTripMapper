@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>DSR Trip Mapper</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{--bg:#000;--bg2:#0e0e0e;--gold:#d4af37;--gold2:#efc13f;--line:#3a3215;--dim:#9a937c;--text:#ece6d2}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:1000;background:#000;border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;display:flex;align-items:center;gap:10px}
+  header h1{flex:1;margin:0;font-size:19px;color:var(--gold2)}
+  header .ver{font-size:12px;font-weight:700;color:var(--gold)}
+  main{max-width:1100px;margin:0 auto;padding:12px 14px 40px}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+  .card h2{margin:0 0 8px;font-size:13px;letter-spacing:.6px;text-transform:uppercase;color:var(--gold2)}
+  button,select,input{font:inherit}
+  .btn{background:var(--gold);color:#120e00;border:0;border-radius:22px;padding:9px 18px;font-weight:700;cursor:pointer}
+  .btn.ghost{background:none;color:var(--gold2);border:1px solid var(--gold)}
+  .btn:disabled{opacity:.45}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  label{color:var(--dim);font-size:13px}
+  input[type=date],select{background:#000;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:7px 9px;color-scheme:dark}
+  .small{font-size:12.5px}.dim{color:var(--dim)}
+  #map{height:62vh;min-height:340px;border-radius:14px;border:1px solid var(--line);background:#111}
+  .chips{display:flex;gap:8px;overflow-x:auto;padding:10px 0 4px;scrollbar-width:thin}
+  .chip{flex:0 0 auto;display:flex;align-items:center;gap:7px;background:#000;border:1px solid var(--line);color:var(--text);border-radius:18px;padding:6px 12px;cursor:pointer;white-space:nowrap;font-size:13px}
+  .chip.sel{border-color:var(--gold);color:var(--gold2)}
+  .sw{width:14px;height:14px;border-radius:50%;flex:0 0 auto}
+  .legend{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:var(--dim);margin-top:6px}
+  .legend svg{vertical-align:middle;margin-right:6px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #222;vertical-align:top}
+  th{color:var(--gold2);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td.n,th.n{text-align:right;white-space:nowrap}
+  tr.tot td{font-weight:700;color:var(--gold2);border-top:1px solid var(--gold)}
+  .status{color:var(--gold2);font-size:13px;min-height:18px;margin-top:6px}
+  .hidden{display:none!important}
+  .leaflet-container{background:#cfd8dc}
+  a{color:var(--gold2)}
+</style>
+</head>
+<body>
+<header><h1>DSR Trip Mapper</h1><span class="ver">1a</span></header>
+<main>
+  <div class="card">
+    <h2>1 · Your Google Timeline</h2>
+    <div class="row">
+      <button class="btn" id="bImport">Import Timeline file…</button>
+      <button class="btn ghost" id="bHow">How do I export it?</button>
+    </div>
+    <div class="small dim" id="dataInfo" style="margin-top:8px">No Timeline loaded yet. It stays on this device - nothing is uploaded.</div>
+    <input type="file" id="file" accept=".json,application/json" multiple class="hidden">
+  </div>
+
+  <div class="card">
+    <h2>2 · The trip</h2>
+    <div class="row">
+      <label>From <input type="date" id="dFrom"></label>
+      <label>To <input type="date" id="dTo"></label>
+      <button class="btn" id="bMap" disabled>Map the trip</button>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div id="out" class="hidden">
+    <div id="map"></div>
+    <div class="chips" id="chips"></div>
+    <div class="legend">
+      <span><svg width="40" height="8"><line x1="3" y1="4" x2="37" y2="4" stroke="#bbb" stroke-width="4" stroke-linecap="round" stroke-dasharray="0.1 7"/></svg>Walked</span>
+      <span><svg width="40" height="8"><line x1="2" y1="4" x2="38" y2="4" stroke="#bbb" stroke-width="4"/></svg>Driven (car, bus, train, ferry)</span>
+      <span><svg width="40" height="8"><line x1="2" y1="4" x2="38" y2="4" stroke="#bbb" stroke-width="3" stroke-dasharray="9 6"/></svg>Flown</span>
+      <span>Each day has its own colour</span>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h2>Export</h2>
+      <div class="row">
+        <label>Format <select id="xFmt"><option value="pdf">PDF (map + summary)</option><option value="jpg">JPEG pictures</option></select></label>
+        <label>Size <select id="xSize"><option value="mobile">Small - for phones</option><option value="a4">Large - A4 printing</option></select></label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="xDays"> Add a close-up map of each day</label>
+        <button class="btn" id="bExport">Export</button>
+        <button class="btn ghost hidden" id="bShare">Share…</button>
+      </div>
+      <div class="status" id="xStatus"></div>
+    </div>
+
+    <div class="card">
+      <h2>Summary</h2>
+      <div id="summary"></div>
+    </div>
+  </div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="app.js?v=1a"></script>
+</body>
+</html>
