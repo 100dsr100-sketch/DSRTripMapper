@@ -14,7 +14,7 @@
 <style>
   :root{--bg:#000;--bg2:#0e0e0e;--gold:#d4af37;--gold2:#efc13f;--line:#3a3215;--dim:#9a937c;--text:#ece6d2}
   *{box-sizing:border-box}
-  html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  html,body{overflow-x:hidden;margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
   header{position:sticky;top:0;z-index:1000;background:#000;border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;display:flex;align-items:center;gap:10px}
   header h1{flex:1;margin:0;font-size:19px;color:var(--gold2)}
   header .ver{font-size:12px;font-weight:700;color:var(--gold)}
@@ -44,6 +44,16 @@
   .trip{display:block;width:100%;text-align:left;background:#000;border:1px solid var(--line);border-radius:12px;padding:9px 12px;margin:0 0 7px;color:var(--text);cursor:pointer}
   .trip:active,.trip:hover{border-color:var(--gold)}
   .trip .tn{display:block;color:var(--gold2);font-weight:600;margin-bottom:2px}
+  .sday{border-left:5px solid #888;background:#000;border-radius:10px;padding:9px 12px;margin-bottom:9px}
+  .shead{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .stot{color:var(--gold2);font-weight:700;white-space:nowrap}
+  .stowns{margin-top:3px;color:#d8d2bd;overflow-wrap:anywhere}
+  .sfly{margin-top:3px;color:var(--gold2);font-size:13.5px}
+  .sparts{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:5px;font-size:13px;color:var(--dim)}
+  .sparts b{color:var(--text);font-weight:600}
+  .stotal{border-top:2px solid var(--gold);margin-top:12px;padding-top:10px}
+  .trow{display:flex;justify-content:space-between;padding:3px 0;color:var(--dim)}
+  .trow b{color:var(--text)}.trow.strong span{color:var(--text);font-weight:600}
   .status{color:var(--gold2);font-size:13px;min-height:18px;margin-top:6px}
   .hidden{display:none!important}
   .leaflet-container{background:#cfd8dc}
@@ -51,7 +61,7 @@
 </style>
 </head>
 <body>
-<header><h1>DSR Trip Mapper</h1><span class="ver">1d</span></header>
+<header><h1>DSR Trip Mapper</h1><span class="ver">1e</span></header>
 <main>
   <div class="card">
     <h2>1 · Your Google Timeline</h2>
@@ -105,6 +115,6 @@
 </main>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="app.js?v=1d"></script>
+<script src="app.js?v=1e"></script>
 </body>
 </html>

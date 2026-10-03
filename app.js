@@ -381,16 +381,26 @@ const f1 = n => n >= 100 ? n.toFixed(0) : n.toFixed(1);
 const kmOr = n => n < 0.05 ? "–" : f1(n) + " km";   // nothing that way that day
 function totals() { const t = { walk: 0, drive: 0, fly: 0 }; TRIP.days.forEach(d => { t.walk += d.km.walk; t.drive += d.km.drive; t.fly += d.km.fly; }); return t; }
 function flightsOf(d) { return d.legs.filter(l => l.mode === "fly"); }
+/* 1e: stacked day blocks (a 6-column table was too wide for a phone and pushed the day totals off screen) */
 function renderSummary() {
   const t = totals();
-  let h = `<table><tr><th>Day</th><th>Towns</th><th class="n">Walked</th><th class="n">Driven</th><th class="n">Flown</th><th class="n">Day total</th></tr>`;
+  const parts = k => [["🚶", "Walked", k.walk], ["🚗", "Driven", k.drive], ["✈", "Flown", k.fly]].filter(x => x[2] >= 0.05)
+    .map(([ic, lb, v]) => `<span class="part">${ic} ${lb} <b>${f1(v)} km</b></span>`).join("") || '<span class="part dim">No travel recorded</span>';
+  let h = "";
   TRIP.days.forEach((d, i) => {
     const tot = d.km.walk + d.km.drive + d.km.fly;
-    h += `<tr><td style="white-space:nowrap"><span class="sw" style="display:inline-block;vertical-align:-2px;background:${d.colour}"></span> Day ${i + 1}<br><span class="dim small">${fmtDate(d.day)}</span></td>
-      <td>${d.towns == null ? '<span class="dim">…</span>' : esc(d.towns.join(" → ") || "-")}${flightsOf(d).map(l => `<br><span class="small" style="color:var(--gold2)">✈ ${esc(l.from || "")} → ${esc(l.to || "")} · ${f1(l.km)} km</span>`).join("")}</td>
-      <td class="n">${kmOr(d.km.walk)}</td><td class="n">${kmOr(d.km.drive)}</td><td class="n">${kmOr(d.km.fly)}</td><td class="n"><b>${f1(tot)} km</b></td></tr>`;
+    h += `<div class="sday" style="border-left-color:${d.colour}">
+      <div class="shead"><span><b>Day ${i + 1}</b> · ${fmtDate(d.day)}</span><span class="stot">${f1(tot)} km</span></div>
+      <div class="stowns">${d.towns == null ? '<span class="dim">finding the towns…</span>' : esc(d.towns.join(" → ") || "-")}</div>
+      ${flightsOf(d).map(l => `<div class="sfly">✈ ${esc(l.from || "…")} → ${esc(l.to || "…")} · ${f1(l.km)} km</div>`).join("")}
+      <div class="sparts">${parts(d.km)}</div></div>`;
   });
-  h += `<tr class="tot"><td colspan="2">Trip total - on the ground ${f1(t.walk + t.drive)} km${t.fly ? `, in the air ${f1(t.fly)} km` : ""}</td><td class="n">${f1(t.walk)} km</td><td class="n">${f1(t.drive)} km</td><td class="n">${f1(t.fly)} km</td><td class="n">${f1(t.walk + t.drive + t.fly)} km</td></tr></table>`;
+  const nf = TRIP.days.reduce((n, d) => n + flightsOf(d).length, 0);
+  h += `<div class="stotal"><div class="shead"><b>Trip total</b><span class="stot">${f1(t.walk + t.drive + t.fly)} km</span></div>
+    <div class="trow"><span>🚶 Walked</span><b>${f1(t.walk)} km</b></div>
+    <div class="trow"><span>🚗 Driven</span><b>${f1(t.drive)} km</b></div>
+    <div class="trow strong"><span>On the ground</span><b>${f1(t.walk + t.drive)} km</b></div>
+    ${t.fly ? `<div class="trow strong"><span>✈ Flown (${nf} flight${nf > 1 ? "s" : ""})</span><b>${f1(t.fly)} km</b></div>` : ""}</div>`;
   $("#summary").innerHTML = h;
 }
 async function findTowns() {
