@@ -41,6 +41,9 @@
   th{color:var(--gold2);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
   td.n,th.n{text-align:right;white-space:nowrap}
   tr.tot td{font-weight:700;color:var(--gold2);border-top:1px solid var(--gold)}
+  .trip{display:block;width:100%;text-align:left;background:#000;border:1px solid var(--line);border-radius:12px;padding:9px 12px;margin:0 0 7px;color:var(--text);cursor:pointer}
+  .trip:active,.trip:hover{border-color:var(--gold)}
+  .trip .tn{display:block;color:var(--gold2);font-weight:600;margin-bottom:2px}
   .status{color:var(--gold2);font-size:13px;min-height:18px;margin-top:6px}
   .hidden{display:none!important}
   .leaflet-container{background:#cfd8dc}
@@ -48,7 +51,7 @@
 </style>
 </head>
 <body>
-<header><h1>DSR Trip Mapper</h1><span class="ver">1c</span></header>
+<header><h1>DSR Trip Mapper</h1><span class="ver">1d</span></header>
 <main>
   <div class="card">
     <h2>1 · Your Google Timeline</h2>
@@ -62,6 +65,8 @@
 
   <div class="card">
     <h2>2 · The trip</h2>
+    <div id="trips"></div>
+    <div class="small dim" style="margin:12px 0 6px">…or choose the dates yourself:</div>
     <div class="row">
       <label>From <input type="date" id="dFrom"></label>
       <label>To <input type="date" id="dTo"></label>
@@ -100,6 +105,6 @@
 </main>
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="app.js?v=1b"></script>
+<script src="app.js?v=1d"></script>
 </body>
 </html>

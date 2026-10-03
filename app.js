@@ -155,6 +155,7 @@ function setInfo() {
   $("#dFrom").min = $("#dTo").min = DATA.from; $("#dFrom").max = $("#dTo").max = DATA.to;
   if (!$("#dFrom").value) { const to = DATA.to, from = addDays(to, -6) < DATA.from ? DATA.from : addDays(to, -6); $("#dFrom").value = from; $("#dTo").value = to; }
   $("#bMap").disabled = false;
+  renderTrips();
 }
 async function importFiles(files) {
   status("Reading the Timeline…");
@@ -164,7 +165,7 @@ async function importFiles(files) {
     try { parseTimeline(JSON.parse(await f.text()), d); names.push(f.name); }
     catch (e) { status(`Couldn't read ${f.name}: ${e.message}`); return; }
   }
-  const r = finish(d);
+  const r = finish(d); TRIPS = null;
   if (!r.legs.length) { status("No journeys found in that file. Is it the Timeline export (Timeline.json)?"); return; }
   const days = r.legs.map(l => l.day).sort();
   DATA = { legs: r.legs, visits: r.visits, from: days[0], to: days[days.length - 1], files: names.join(", ") };
@@ -179,23 +180,31 @@ const placeCache = (() => { try { return JSON.parse(localStorage.getItem("dsrtri
 let lastAsk = 0;
 /* the place at a point: { big: city or town, small: village / hamlet / suburb }, tidied ("City of Edinburgh" -> "Edinburgh") */
 const tidy = n => String(n || "").replace(/^City of /i, "").replace(/^Greater /i, "").replace(/^(Royal )?Borough of /i, "").trim();
-async function place(ll) {
+/* one lookup at a time, at most one a second (their rule); the summary's towns (hi) go ahead of trip-list names (lo) */
+const asks = { hi: [], lo: [] }; let asking = false;
+function place(ll, low) {
   const key = ll[0].toFixed(2) + "," + ll[1].toFixed(2);
-  if (key in placeCache) return placeCache[key];
-  const wait = 1100 - (Date.now() - lastAsk); if (wait > 0) await new Promise(r => setTimeout(r, wait));   // their limit: 1 a second
-  lastAsk = Date.now();
-  let p;
-  try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=13&accept-language=en&lat=${ll[0]}&lon=${ll[1]}`);
-    const a = (await r.json()).address || {};
-    p = { big: tidy(a.city || a.town), small: tidy(a.village || a.hamlet || a.suburb) };   // never councils, counties or states
-  } catch { return { big: "", small: "" }; }   // offline - don't cache, try again next time
-  placeCache[key] = p;
-  try { localStorage.setItem("dsrtrip.places3", JSON.stringify(placeCache)); } catch {}
-  return p;
+  if (key in placeCache) return Promise.resolve(placeCache[key]);
+  return new Promise(res => { asks[low ? "lo" : "hi"].push({ key, ll, res }); pump(); });
+}
+async function pump() {
+  if (asking) return; asking = true;
+  for (let job; (job = asks.hi.shift() || asks.lo.shift());) {
+    if (job.key in placeCache) { job.res(placeCache[job.key]); continue; }
+    const wait = 1100 - (Date.now() - lastAsk); if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    lastAsk = Date.now();
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=13&accept-language=en&lat=${job.ll[0]}&lon=${job.ll[1]}`);
+      const a = (await r.json()).address || {};
+      placeCache[job.key] = { big: tidy(a.city || a.town), small: tidy(a.village || a.hamlet || a.suburb) };   // never councils, counties or states
+      try { localStorage.setItem("dsrtrip.places3", JSON.stringify(placeCache)); } catch {}
+      job.res(placeCache[job.key]);
+    } catch { job.res({ big: "", small: "" }); }   // offline - not cached, tried again next time
+  }
+  asking = false;
 }
 /* where you stopped: the town (or the village if there's no town); passing through: towns and cities only */
-async function placeName(ll, passing) { const p = await place(ll); return passing ? p.big : (p.big || p.small); }
+async function placeName(ll, passing, low) { const p = await place(ll, low); return passing ? p.big : (p.big || p.small); }
 /* the towns a day passed through, in order: where each journey starts/ends, visits, and every ~25 km on the road */
 async function townsFor(day, progress) {
   const pts = [];
@@ -210,6 +219,83 @@ async function townsFor(day, progress) {
   const out = [];
   for (const p of pick) { const n = await placeName(p.ll, p.passing); progress && progress(); if (n && out[out.length - 1] !== n && !out.includes(n)) out.push(n); }
   return out;
+}
+
+/* ======================= finding the trips by themselves ======================= */
+/* Home = where most nights end (the last place each day). A day is "away" when any of it is over 40 km from home;
+   a run of away days (allowing up to 2 days with no data in between) is a trip, from the day you left to the day you
+   got back. One-day ones are day trips. */
+const AWAY_KM = 40;
+let TRIPS = null;
+function detectTrips() {
+  const per = new Map(), get = d => per.get(d) || (per.set(d, { pts: [], night: null, nightT: -Infinity, km: 0, flights: 0 }), per.get(d));
+  for (const l of DATA.legs) {
+    const d = get(l.day), step = Math.max(1, Math.floor(l.pts.length / 30));
+    for (let i = 0; i < l.pts.length; i += step) d.pts.push(l.pts[i]);
+    d.pts.push(l.pts[l.pts.length - 1]); d.km += l.km; if (l.mode === "fly") d.flights++;
+    if (l.t1 > d.nightT) { d.nightT = l.t1; d.night = l.pts[l.pts.length - 1]; }
+  }
+  for (const v of DATA.visits) { const d = get(v.day); d.pts.push(v.ll); if (v.t > d.nightT) { d.nightT = v.t; d.night = v.ll; } }
+  // homes: ~10 km cells holding at least a quarter of all nights (usually one; two if you live in two places)
+  const cells = new Map();
+  for (const d of per.values()) if (d.night) { const k = Math.round(d.night[0] * 10) + "," + Math.round(d.night[1] * 10); const c = cells.get(k) || { n: 0, la: 0, lo: 0 }; c.n++; c.la += d.night[0]; c.lo += d.night[1]; cells.set(k, c); }
+  const all = [...cells.values()], nights = all.reduce((a, c) => a + c.n, 0), sorted = all.sort((a, b) => b.n - a.n);
+  const homes = sorted.filter((c, i) => i === 0 || c.n >= nights * 0.25).map(c => [c.la / c.n, c.lo / c.n]);
+  if (!homes.length) return { homes, trips: [] };
+  const fromHome = p => { let m = Infinity; for (const h of homes) m = Math.min(m, km(h, p)); return m; };
+  const days = [...per.keys()].sort(), info = {};
+  for (const day of days) { const d = per.get(day); let far = 0, at = null; for (const p of d.pts) { const k = fromHome(p); if (k > far) { far = k; at = p; } } info[day] = { far, at, km: d.km, flights: d.flights, night: d.night }; }
+  const trips = []; let cur = null, gap = 0;
+  for (let day = days[0]; day <= days[days.length - 1]; day = addDays(day, 1)) {
+    const i = info[day];
+    if (i && i.far > AWAY_KM) {
+      if (!cur) cur = { from: day, to: day, far: 0, at: null, km: 0, flights: 0, days: 0, nights: [] };
+      if (i.night && fromHome(i.night) > AWAY_KM) cur.nights.push(i.night);
+      cur.to = day; cur.days = daysBetween(cur.from, day) + 1; cur.km += i.km; cur.flights += i.flights;
+      if (i.far > cur.far) { cur.far = i.far; cur.at = i.at; }
+      gap = 0;
+    } else if (cur) {
+      if (!i && ++gap <= 2) continue;              // no data for a day or two mid-trip: still away
+      trips.push(cur); cur = null; gap = 0;
+    }
+  }
+  if (cur) trips.push(cur);
+  trips.reverse();                                  // newest first
+  return { homes, trips };
+}
+/* named after where the nights were spent (the two places with most nights away), else the furthest point */
+async function tripName(t) {
+  const cells = new Map();
+  for (const p of t.nights) { const k = Math.round(p[0] * 10) + "," + Math.round(p[1] * 10); const c = cells.get(k) || { n: 0, p }; c.n++; cells.set(k, c); }
+  const spots = [...cells.values()].sort((a, b) => b.n - a.n).slice(0, 3).map(c => c.p);
+  if (!spots.length && t.at) spots.push(t.at);
+  const names = [];
+  for (const p of spots) { const n = await placeName(p, false, true); if (n && !names.includes(n)) names.push(n); if (names.length === 2) break; }
+  return names.length ? "Trip to " + names.join(" & ") : `Trip ${t.far.toFixed(0)} km from home`;
+}
+let showDayTrips = false, tripsShown = 15;
+function renderTrips() {
+  const box = $("#trips"); if (!DATA) return;
+  if (!TRIPS) TRIPS = detectTrips();
+  const list = TRIPS.trips.filter(t => showDayTrips || t.days > 1);
+  if (!TRIPS.homes.length || !TRIPS.trips.length) { box.innerHTML = '<div class="small dim">No trips away from home found - choose the dates yourself below.</div>'; return; }
+  const range = t => t.from === t.to ? fmtDate(t.from) : `${shortDate(t.from)} – ${fmtDate(t.to)}`;
+  box.innerHTML = `<div class="small dim" style="margin-bottom:6px">Home: <b id="homeName">…</b> (where you sleep most nights). ${list.length} ${list.length === 1 ? "trip" : showDayTrips ? "trips and day trips" : "trips"} found - tap one to map it.</div>` +
+    list.slice(0, tripsShown).map(t => `<button class="trip" data-i="${TRIPS.trips.indexOf(t)}"><span class="tn">${t.flights ? "✈ " : ""}<span class="tname">${esc(t.name || "…")}</span></span>
+      <span class="small dim">${range(t)} · ${t.days} day${t.days > 1 ? "s" : ""} · ${Math.round(t.km).toLocaleString()} km${t.flights ? ` · ${t.flights} flight${t.flights > 1 ? "s" : ""}` : ""}</span></button>`).join("") +
+    `<div class="row" style="margin-top:8px">${list.length > tripsShown ? '<button class="btn ghost" id="tMore">Show more</button>' : ""}
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="tDay" ${showDayTrips ? "checked" : ""}> Include day trips</label></div>`;
+  box.querySelectorAll(".trip").forEach(b => b.onclick = () => { const t = TRIPS.trips[+b.dataset.i]; $("#dFrom").value = t.from; $("#dTo").value = t.to; mapTrip(); });
+  if ($("#tMore")) $("#tMore").onclick = () => { tripsShown += 15; renderTrips(); };
+  $("#tDay").onchange = e => { showDayTrips = e.target.checked; tripsShown = 15; renderTrips(); };
+  // names, slowly (shared one-a-second lookups; the open trip's towns go first)
+  const shown = TRIPS;
+  placeName(TRIPS.homes[0], false, true).then(n => { const h = $("#homeName"); if (h && shown === TRIPS) h.textContent = n || "found"; });
+  for (const b of box.querySelectorAll(".trip")) {
+    const t = TRIPS.trips[+b.dataset.i];
+    if (t.name) continue;
+    tripName(t).then(n => { t.name = n; const el = b.querySelector(".tname"); if (el) el.textContent = n; });
+  }
 }
 
 /* ======================= the trip ======================= */
