@@ -92,7 +92,7 @@ function parseTimeline(json, into) {
       const A = stamp(a.duration?.startTimestamp ?? a.duration?.startTimestampMs, st[1]), B = stamp(a.duration?.endTimestamp ?? a.duration?.endTimestampMs, en[1]); if (!A || !B) continue;
       const way = (a.waypointPath?.waypoints || []).map(parseLL).filter(Boolean);
       const sim = (a.simplifiedRawPath?.points || []).map(p => ({ t: Date.parse(p.timestamp ?? +p.timestampMs), ll: parseLL(p) })).filter(p => p.ll && !isNaN(p.t));
-      pathPts.push(...sim);
+      for (const q of sim) pathPts.push(q);
       legs.push({ t0: A.t, t1: B.t, day: A.day, type: a.activityType, start: st, end: en, dist: +a.distance || +a.waypointPath?.distanceMeters || 0, way });
     }
     if (v?.location) { const ll = parseLL(v.location); const A = ll && stamp(v.duration?.startTimestamp ?? v.duration?.startTimestampMs, ll[1]); if (A) visits.push({ t: A.t, day: A.day, ll }); }
@@ -100,7 +100,7 @@ function parseTimeline(json, into) {
   if (Array.isArray(json.locations)) {                         // Takeout "Records.json": raw points only
     for (const l of json.locations) { const ll = parseLL(l); const t = l.timestamp ? Date.parse(l.timestamp) : +l.timestampMs; if (ll && !isNaN(t)) into.raw.push({ t, ll }); }
   }
-  into.path.push(...pathPts);
+  for (const q of pathPts) into.path.push(q);   // (not push(...) - a real Timeline has far more points than a call can take)
 }
 
 /* attach the recorded path to each journey and settle its mode and length */
@@ -110,7 +110,7 @@ function finish(d) {
   const legs = [];
   for (const g of d.legs) {
     let pts = [g.start];
-    if (g.way?.length) pts.push(...g.way);
+    if (g.way?.length) for (const q of g.way) pts.push(q);
     else for (let i = at(g.t0); i < P.length && P[i].t <= g.t1; i++) pts.push(P[i].ll);
     pts.push(g.end);
     const straight = km(g.start, g.end), hours = (g.t1 - g.t0) / 3.6e6;
@@ -120,7 +120,7 @@ function finish(d) {
     if (dist < 0.05) continue;
     legs.push({ t0: g.t0, t1: g.t1, day: g.day, mode, pts, km: dist });
   }
-  if (!d.legs.length && d.raw.length) legs.push(...fromRaw(d.raw));   // only raw points: work the journeys out by speed
+  if (!d.legs.length && d.raw.length) for (const q of fromRaw(d.raw)) legs.push(q);   // only raw points: work the journeys out by speed
   legs.sort((a, b) => a.t0 - b.t0);
   d.visits.sort((a, b) => a.t - b.t);
   return { legs, visits: d.visits };
