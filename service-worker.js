@@ -1,6 +1,6 @@
 /* DSR Trip Mapper - network-first app shell; libraries and map tiles cache-first so maps already seen work
    offline. Only ever deletes its OWN old caches: every DSR app shares the github.io origin's cache storage. */
-var CACHE = 'dsr-tripmap-v1j';
+var CACHE = 'dsr-tripmap-v1k';
 var OWN = 'dsr-tripmap-';
 var SHELL = ['./', './index.html', './app.js?v=1h', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); })); });
