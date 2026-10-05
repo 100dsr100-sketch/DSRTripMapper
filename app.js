@@ -11,6 +11,13 @@ const PALETTE = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#00a6a6
   "#e6b400", "#800000", "#2f8f4f", "#ff6f91", "#5b5bd6", "#c45c00"];
 const dayColour = i => PALETTE[i % PALETTE.length];
 const TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";   // free; (CARTO now wants an API key)
+/* 2a: the map and PDF libraries load when first needed (both used to load with every start) */
+const loadJs = src => new Promise((ok, bad) => { if (document.querySelector(`script[src="${src}"]`)) return ok();
+  const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => { s.remove(); bad(new Error("couldn't load " + src.split("/").pop() + " - are you online?")); }; document.head.appendChild(s); });
+let leafletP = null;
+const leafletReady = () => window.L ? Promise.resolve() : leafletP ||= Promise.all([
+  new Promise(ok => { const l = document.createElement("link"); l.rel = "stylesheet"; l.href = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"; l.onload = l.onerror = ok; document.head.appendChild(l); }),
+  loadJs("https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js")]).catch(e => { leafletP = null; throw e; });
 const ATTRIB = "© OpenStreetMap contributors";
 
 /* ======================= reading the Timeline ======================= */
@@ -139,6 +146,17 @@ function fromRaw(raw) {
   return out;
 }
 
+/* 2a: one line per day of the whole Timeline: km each way, flights, and a spot for the day's place name */
+let DAYS = null;
+function dayIndex() {
+  if (DAYS) return DAYS;
+  DAYS = new Map();
+  const get = d => DAYS.get(d) || (DAYS.set(d, { walk: 0, drive: 0, fly: 0, flights: 0, spot: null, spotT: -Infinity }), DAYS.get(d));
+  for (const l of DATA.legs) { const d = get(l.day); d[l.mode] += l.km; if (l.mode === "fly") d.flights++; if (l.t1 > d.spotT) { d.spotT = l.t1; d.spot = l.pts[l.pts.length - 1]; } }
+  for (const v of DATA.visits) { const d = get(v.day); if (v.t > d.spotT) { d.spotT = v.t; d.spot = v.ll; } }
+  return DAYS;
+}
+
 /* ======================= stored data (IndexedDB - stays on this device) ======================= */
 const DB = (() => {
   let p = null;
@@ -155,7 +173,7 @@ function setInfo() {
   $("#dFrom").min = $("#dTo").min = DATA.from; $("#dFrom").max = $("#dTo").max = DATA.to;
   if (!$("#dFrom").value) { const to = DATA.to, from = addDays(to, -6) < DATA.from ? DATA.from : addDays(to, -6); $("#dFrom").value = from; $("#dTo").value = to; }
   $("#bMap").disabled = false;
-  renderTrips();
+  renderTrips(); renderMemories(); renderYears();
 }
 async function importFiles(files) {
   status("Reading the Timeline…");
@@ -165,7 +183,7 @@ async function importFiles(files) {
     try { parseTimeline(JSON.parse(await f.text()), d); names.push(f.name); }
     catch (e) { status(`Couldn't read ${f.name}: ${e.message}`); return; }
   }
-  const r = finish(d); TRIPS = null;
+  const r = finish(d); TRIPS = null; DAYS = null;
   if (!r.legs.length) { status("No journeys found in that file. Is it the Timeline export (Timeline.json)?"); return; }
   const days = r.legs.map(l => l.day).sort();
   DATA = { legs: r.legs, visits: r.visits, from: days[0], to: days[days.length - 1], files: names.join(", ") };
@@ -263,8 +281,12 @@ function detectTrips() {
   trips.reverse();                                  // newest first
   return { homes, trips };
 }
+/* 2a: names you give a trip (✎ Rename) - kept on this device, keyed by its dates */
+const NAMES = (() => { try { return JSON.parse(localStorage.getItem("dsrtrip.names") || "{}"); } catch { return {}; } })();
+const nameKey = (a, b) => a + "_" + b;
 /* named after where the nights were spent (the two places with most nights away), else the furthest point */
 async function tripName(t) {
+  if (NAMES[nameKey(t.from, t.to)]) return NAMES[nameKey(t.from, t.to)];
   const cells = new Map();
   for (const p of t.nights) { const k = Math.round(p[0] * 10) + "," + Math.round(p[1] * 10); const c = cells.get(k) || { n: 0, p }; c.n++; cells.set(k, c); }
   const spots = [...cells.values()].sort((a, b) => b.n - a.n).slice(0, 3).map(c => c.p);
@@ -384,9 +406,10 @@ function styleFor(mode, colour, scale = 1) {
   return { color: colour, weight: 4 * scale, opacity: 0.95, lineCap: "round", lineJoin: "round" };
 }
 function drawMap() {
+  replayStop(true);
   $("#out").classList.remove("hidden");
   if (!map) {
-    map = L.map("map", { minZoom: 1, maxZoom: 19, worldCopyJump: false, zoomSnap: 0.25 });
+    map = L.map("map", { minZoom: 1, maxZoom: 19, worldCopyJump: false, zoomSnap: 0.25, preferCanvas: true });   // 2a: lines on one canvas - lighter than thousands of SVG paths
     L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIB, crossOrigin: true }).addTo(map);
     lockControl().addTo(map);
   }
@@ -478,7 +501,9 @@ async function mapTrip(title) {
   if (daysBetween(from, to) > 400) return status("That's over a year - choose up to 400 days.");
   TRIP = buildTrip(from, to);
   if (!TRIP.days.some(d => d.legs.length)) { status("No travel recorded between those dates."); $("#out").classList.add("hidden"); return; }
-  status(""); showTrip(typeof title === "string" ? title : "");
+  try { await leafletReady(); } catch (e) { return status(e.message); }
+  document.body.classList.remove("everywhere");
+  status(""); showTrip(typeof title === "string" ? title : (NAMES[nameKey(from, to)] || ""));
   TRIP.regions = findRegions();
   drawMap(); renderSummary();
   const trip = TRIP;
@@ -498,7 +523,9 @@ const project = (lat, lon, z) => { const s = 256 * 2 ** z, x = (lon + 180) / 360
    (everything outside it drawn faintly for context) */
 const dayView = i => { const d = TRIP.days[i]; return { title: `Day ${i + 1} · ${fmtDate(d.day)}`, legs: new Set(d.legs), days: [d], km: d.km, note: `This day${TRIP.days.length > 1 ? " - the rest of the trip is shown faintly" : ""}` }; };
 const regionView = r => ({ title: `${r.name} · ${regionDates(r)}`, legs: new Set(r.legs), days: r.days, km: r.km, note: null });
-async function renderMapCanvas(sz, onProgress, view = null) {
+/* the picture's frame: title band, map tiles, key - and P() to place a point on it. 2a: split out of
+   renderMapCanvas so the trip video can draw its moving lines on the same background. */
+async function mapBase(sz, onProgress, view = null, keyDays = true) {
   const focus = view ? view.days : TRIP.days, inView = l => !view || view.legs.has(l);
   let b = view ? boundsOfLegs([...view.legs]) : boundsOf(focus);
   if (b.getNorthEast().lat - b.getSouthWest().lat < 0.01 && b.getNorthEast().lng - b.getSouthWest().lng < 0.01) b = b.pad(2);   // a tiny walk: don't zoom to the pavement
@@ -508,11 +535,11 @@ async function renderMapCanvas(sz, onProgress, view = null) {
   const c = document.createElement("canvas"); c.width = W; c.height = H; const g = c.getContext("2d");
   g.fillStyle = "#fff"; g.fillRect(0, 0, W, H);
   // title band, map box, key band
-  const pad = Math.round(28 * U), titleH = Math.round(70 * U), keyRows = view && view.note ? 1 : Math.ceil(focus.length / (land ? 5 : 3));
+  const pad = Math.round(28 * U), titleH = Math.round(70 * U), keyRows = !keyDays || (view && view.note) ? 1 : Math.ceil(focus.length / (land ? 5 : 3));
   const keyH = Math.round((52 + Math.min(keyRows, 8) * 26) * U);
   const mx = pad, my = titleH, mw = W - 2 * pad, mh = H - titleH - keyH - pad;
   g.fillStyle = "#111"; g.font = `700 ${Math.round(30 * U)}px system-ui, sans-serif`; g.textBaseline = "middle";
-  g.fillText(view ? view.title : `Trip map · ${fmtDate(TRIP.from)} – ${fmtDate(TRIP.to)}`, pad, titleH / 2);
+  g.fillText(view ? view.title : (sz.title || `Trip map · ${fmtDate(TRIP.from)} – ${fmtDate(TRIP.to)}`), pad, titleH / 2);
   const t = view ? view.km : totals(); g.font = `${Math.round(18 * U)}px system-ui, sans-serif`; g.fillStyle = "#555"; g.textAlign = "right";
   g.fillText(`${f1(t.walk + t.drive)} km on the ground${t.fly ? ` · ${f1(t.fly)} km flown` : ""}`, W - pad, titleH / 2); g.textAlign = "left";
   // the zoom that fits the trip into the box (fractional), tiles from the next whole zoom up for sharpness
@@ -532,22 +559,10 @@ async function renderMapCanvas(sz, onProgress, view = null) {
     onProgress && onProgress(++done, jobs.length);
   };
   for (let i = 0; i < jobs.length; i += 6) await Promise.all(jobs.slice(i, i + 6).map(run));   // gently - it's a free service
-  // the journeys (flights and drives under walks, so the dotted walks stay visible)
-  const P = ll => { const p = project(ll[0], ll[1], zf); return [mx + p[0] - ox, my + p[1] - oy]; };
-  const lineScale = U * 1.1;
-  for (const faint of view ? [true, false] : [false]) for (const want of ["fly", "drive", "walk"]) for (const d of TRIP.days) for (const l of d.legs) {
-    if (l.mode !== want || inView(l) === faint) continue;
-    const st = styleFor(l.mode, d.colour, lineScale);
-    g.globalAlpha = faint ? 0.3 : 1;
-    g.beginPath(); l.draw.forEach((ll, i) => { const [x, y] = P(ll); i ? g.lineTo(x, y) : g.moveTo(x, y); });
-    g.lineWidth = st.weight + 2.5 * U; g.strokeStyle = "rgba(255,255,255,.85)"; g.setLineDash(st.dashArray ? st.dashArray.split(" ").map(Number) : []); g.lineCap = st.lineCap; g.lineJoin = "round"; g.stroke();
-    g.lineWidth = st.weight; g.strokeStyle = d.colour; g.stroke();
-  }
-  g.globalAlpha = 1; g.setLineDash([]);
-  for (const d of focus) { const first = d.legs.find(inView); if (!first) continue; const [x, y] = P(first.draw[0]); g.beginPath(); g.arc(x, y, 6 * U, 0, 7); g.fillStyle = d.colour; g.fill(); g.lineWidth = 2.2 * U; g.strokeStyle = "#fff"; g.stroke(); }
   g.restore();
   g.strokeStyle = "#999"; g.lineWidth = 1.5 * U; g.strokeRect(mx, my, mw, mh);
   g.font = `${Math.round(12 * U)}px system-ui, sans-serif`; g.fillStyle = "rgba(0,0,0,.6)"; g.textAlign = "right"; g.fillText(ATTRIB, mx + mw - 6 * U, my + mh - 10 * U); g.textAlign = "left";
+  const lineScale = U * 1.1;
   // key: line styles, then the day colours
   let ky = my + mh + Math.round(26 * U);
   g.font = `${Math.round(16 * U)}px system-ui, sans-serif`; g.fillStyle = "#333"; let kx = pad;
@@ -556,14 +571,38 @@ async function renderMapCanvas(sz, onProgress, view = null) {
     g.setLineDash(st.dashArray ? st.dashArray.split(" ").map(Number) : []); g.lineCap = st.lineCap; g.stroke(); g.setLineDash([]);
     g.fillText(MODES[m], kx + 56 * U, ky); kx += 56 * U + g.measureText(MODES[m]).width + 34 * U;
   }
-  const cols = land ? 5 : 3, cw = (W - 2 * pad) / cols;
-  (view && view.note ? [focus[0]] : focus.slice(0, cols * 8)).forEach((d, i) => {
-    const x = pad + (i % cols) * cw, y = ky + Math.round((30 + Math.floor(i / cols) * 26) * U);
-    g.beginPath(); g.arc(x + 8 * U, y, 7 * U, 0, 7); g.fillStyle = d.colour; g.fill();
-    g.fillStyle = "#333"; g.fillText(view && view.note ? view.note : `Day ${TRIP.days.indexOf(d) + 1} · ${shortDate(d.day)}`, x + 22 * U, y);
-  });
-  if (!(view && view.note) && focus.length > cols * 8) { g.fillStyle = "#777"; g.fillText(`… ${focus.length - cols * 8} more days - see the summary`, pad, ky + Math.round((30 + 8 * 26) * U)); }
-  return c;
+  if (keyDays) {
+    const cols = land ? 5 : 3, cw = (W - 2 * pad) / cols;
+    (view && view.note ? [focus[0]] : focus.slice(0, cols * 8)).forEach((d, i) => {
+      const x = pad + (i % cols) * cw, y = ky + Math.round((30 + Math.floor(i / cols) * 26) * U);
+      g.beginPath(); g.arc(x + 8 * U, y, 7 * U, 0, 7); g.fillStyle = d.colour; g.fill();
+      g.fillStyle = "#333"; g.fillText(view && view.note ? view.note : `Day ${TRIP.days.indexOf(d) + 1} · ${shortDate(d.day)}`, x + 22 * U, y);
+    });
+    if (!(view && view.note) && focus.length > cols * 8) { g.fillStyle = "#777"; g.fillText(`… ${focus.length - cols * 8} more days - see the summary`, pad, ky + Math.round((30 + 8 * 26) * U)); }
+  }
+  const P = ll => { const p = project(ll[0], ll[1], zf); return [mx + p[0] - ox, my + p[1] - oy]; };
+  return { c, g, P, U, mx, my, mw, mh, lineScale, focus, inView, W, H };
+}
+/* one journey line on a canvas (white casing under the coloured line, like the screen map) */
+function strokeLeg(g, P, pts, mode, colour, lineScale, U, alpha = 1) {
+  const st = styleFor(mode, colour, lineScale);
+  g.globalAlpha = alpha;
+  g.beginPath(); pts.forEach((ll, i) => { const [x, y] = P(ll); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.lineWidth = st.weight + 2.5 * U; g.strokeStyle = "rgba(255,255,255,.85)"; g.setLineDash(st.dashArray ? st.dashArray.split(" ").map(Number) : []); g.lineCap = st.lineCap; g.lineJoin = "round"; g.stroke();
+  g.lineWidth = st.weight; g.strokeStyle = colour; g.stroke();
+  g.globalAlpha = 1; g.setLineDash([]);
+}
+async function renderMapCanvas(sz, onProgress, view = null) {
+  const B = await mapBase(sz, onProgress, view), { g, P, U, mx, my, mw, mh, lineScale, focus, inView } = B;
+  g.save(); g.beginPath(); g.rect(mx, my, mw, mh); g.clip();
+  // the journeys (flights and drives under walks, so the dotted walks stay visible)
+  for (const faint of view ? [true, false] : [false]) for (const want of ["fly", "drive", "walk"]) for (const d of TRIP.days) for (const l of d.legs) {
+    if (l.mode !== want || inView(l) === faint) continue;
+    strokeLeg(g, P, l.draw, l.mode, d.colour, lineScale, U, faint ? 0.3 : 1);
+  }
+  for (const d of focus) { const first = d.legs.find(inView); if (!first) continue; const [x, y] = P(first.draw[0]); g.beginPath(); g.arc(x, y, 6 * U, 0, 7); g.fillStyle = d.colour; g.fill(); g.lineWidth = 2.2 * U; g.strokeStyle = "#fff"; g.stroke(); }
+  g.restore();
+  return B.c;
 }
 /* the summary page(s): one row per day, flights listed, totals at the end */
 function renderSummaryCanvases(sz) {
@@ -627,6 +666,8 @@ async function doExport() {
     if (fmt === "jpg") {
       for (let i = 0; i < all.length; i++) files.push(new File([await jpeg(all[i])], `${name} ${String(i + 1).padStart(2, "0")} ${i === 0 ? "map" : i <= nRegionPages ? (TRIP.regions[i - 1].name || "area") : i <= dayPages.length ? "day " + (i - nRegionPages) : "summary"}.jpg`, { type: "image/jpeg" }));
     } else {
+      xs("Getting the PDF maker…");
+      await loadJs("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
       const { jsPDF } = window.jspdf;
       const pageOf = c => sz === SIZES.a4 ? { f: "a4", o: c.width > c.height ? "l" : "p" } : { f: [c.width * 0.75, c.height * 0.75], o: c.width > c.height ? "l" : "p" };
       let pdf = null;
@@ -645,6 +686,218 @@ async function doExport() {
     $("#bShare").classList.toggle("hidden", !(navigator.canShare && navigator.canShare({ files })));
   } catch (e) { xs("Export failed: " + e.message); }
   $("#bExport").disabled = false;
+}
+
+/* ======================= replay: the trip drawn day by day (2a) =======================
+   Each day gets the same share of the time; within a day, journeys by distance^0.6 (so a long flight doesn't
+   take forever and a short walk is still seen). A ✈ / 🚗 / 🚶 rides the tip of the line. */
+const RP_ICON = { fly: "✈️", drive: "🚗", walk: "🚶" };
+function replayPlan() {
+  const legs = [], live = TRIP.days.filter(d => d.legs.length);
+  const total = Math.min(75, 6 + live.length * 3.2), perDay = total / Math.max(1, live.length);
+  let t = 0;
+  for (const d of live) {
+    const ls = [...d.legs].sort((a, b) => a.t0 - b.t0), w = ls.map(l => Math.max(0.35, Math.pow(l.km + 0.5, 0.6))), W = w.reduce((a, b) => a + b, 0);
+    ls.forEach((l, i) => { const x = { l, d, di: TRIP.days.indexOf(d), t0: t, dur: perDay * 0.86 * w[i] / W, cum: cumDist(l.draw) }; t += x.dur; legs.push(x); });
+    t += perDay * 0.14;
+  }
+  return { legs, dur: t };
+}
+function cumDist(pts) { const c = [0]; for (let i = 1; i < pts.length; i++) c.push(c[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], (pts[i][1] - pts[i - 1][1]) * Math.cos(pts[i][0] * Math.PI / 180))); return c; }
+/* the first fraction f of a line (by length), ending at an in-between point */
+function partial(pts, cum, f) {
+  if (f >= 1 || pts.length < 2) return pts;
+  const L = cum[cum.length - 1] * Math.max(0, f); if (!L) return [pts[0], pts[0]];
+  let lo = 1, hi = cum.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m] < L) lo = m + 1; else hi = m; }
+  const a = pts[lo - 1], b = pts[lo], k = (L - cum[lo - 1]) / ((cum[lo] - cum[lo - 1]) || 1);
+  const out = pts.slice(0, lo); out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]); return out;
+}
+const capText = x => `Day ${x.di + 1} · ${shortDate(x.d.day)}${x.d.towns?.length ? " · " + (x.d.towns.length > 3 ? x.d.towns[0] + " → … → " + x.d.towns[x.d.towns.length - 1] : x.d.towns.join(" → ")) : ""}`;
+let RP = null;
+function paintReplay() {
+  $("#rpPlay").textContent = !RP ? "▶ Replay the trip" : RP.playing ? "⏸ Pause" : "▶ Carry on";
+  $("#rpStop").classList.toggle("hidden", !RP);
+  $("#rpCap").classList.toggle("hidden", !RP);
+}
+function replayStart() {
+  if (!TRIP || !map) return;
+  if (RP) { RP.playing = !RP.playing; RP.last = performance.now(); return paintReplay(); }
+  const plan = replayPlan(); if (!plan.legs.length) return toast("Nothing to replay");
+  if (layer) layer.remove();
+  const g = L.featureGroup().addTo(map);
+  RP = { plan, g, t: 0, last: performance.now(), playing: true, lines: new Map(), day: -1, mode: null, marker: null };
+  const first = plan.legs[0];
+  RP.marker = L.marker(first.l.draw[0], { icon: L.divIcon({ className: "rpicon", html: RP_ICON[first.l.mode], iconSize: [30, 30], iconAnchor: [15, 15] }), interactive: false, zIndexOffset: 1000 }).addTo(g);
+  paintReplay(); replayTick();
+}
+/* next frame - by animation frame, or a timer if the browser holds frames back (screen dimming, a hidden tab) */
+function nextFrame(fn) { let done = false; const go = now => { if (!done) { done = true; fn(now || performance.now()); } }; requestAnimationFrame(go); setTimeout(go, 120); }
+function replayTick() { if (RP) nextFrame(replayFrame); }
+function replayFrame(now) {
+  if (!RP) return;
+  const dt = Math.min(0.1, (now - RP.last) / 1000); RP.last = now;
+  if (RP.playing) RP.t += dt * +$("#rpSpeed").value;
+  let cur = null;
+  for (const x of RP.plan.legs) {
+    if (RP.t < x.t0) break;
+    cur = x;
+    if (x.full) continue;
+    const f = Math.min(1, (RP.t - x.t0) / x.dur);
+    let pl = RP.lines.get(x);
+    if (!pl) { pl = L.polyline([], styleFor(x.l.mode, x.d.colour)).addTo(RP.g); RP.lines.set(x, pl); }
+    pl.setLatLngs(partial(x.l.draw, x.cum, f)); if (f >= 1) x.full = true;
+  }
+  if (cur) {
+    const f = Math.min(1, (RP.t - cur.t0) / cur.dur), pts = partial(cur.l.draw, cur.cum, f);
+    RP.marker.setLatLng(pts[pts.length - 1]);
+    if (RP.mode !== cur.l.mode) { RP.mode = cur.l.mode; RP.marker.setIcon(L.divIcon({ className: "rpicon", html: RP_ICON[cur.l.mode], iconSize: [30, 30], iconAnchor: [15, 15] })); }
+    if (RP.day !== cur.di) {   // a new day: frame it, and say which day it is
+      RP.day = cur.di; $("#rpCap").textContent = capText(cur);
+      const bb = boundsOf([cur.d]); if (bb.isValid()) map.flyToBounds(bb.pad(0.25), { maxZoom: 14, duration: 0.9 });
+    }
+  }
+  if (RP.t >= RP.plan.dur + 0.8) { replayStop(); toast("That's the whole trip"); return; }
+  replayTick();
+}
+/* quiet = leaving the trip / redrawing: no re-fit */
+function replayStop(quiet) {
+  if (!RP) return;
+  RP.g.remove(); RP.plan.legs.forEach(x => delete x.full); RP = null;
+  if (layer && map && !map.hasLayer(layer)) layer.addTo(map);
+  paintReplay();
+  if (!quiet) { fitTo(null); $("#chips").querySelectorAll(".chip").forEach((x, i) => x.classList.toggle("sel", i === 0)); }
+}
+
+/* ======================= trip video (2a) =======================
+   The replay drawn on our own picture of the map (whole trip in view) and recorded as a video (MP4 where the
+   phone can, else WebM) - for Messenger etc. It's recorded as it plays, so it takes as long as it lasts. */
+async function exportVideo() {
+  if (!TRIP || !window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) return toast("This browser can't make videos");
+  const xs = t => $("#xStatus").textContent = t, btn = $("#bVideo");
+  replayStop(true); btn.disabled = true;
+  try {
+    const sz = { ...SIZES.mobile, title: ($("#tripTitle").textContent || "Trip") + " · " + shortDate(TRIP.from) + " – " + shortDate(TRIP.to) };
+    const B = await mapBase(sz, (a, b) => xs(`Drawing the map… ${a}/${b}`), null, false), { P, U, mx, my, mw, mh, lineScale } = B;
+    const W = B.W - B.W % 2, H = B.H - B.H % 2;
+    const acc = document.createElement("canvas"); acc.width = W; acc.height = H; const ag = acc.getContext("2d"); ag.drawImage(B.c, 0, 0);   // background + finished lines
+    const out = document.createElement("canvas"); out.width = W; out.height = H; const o = out.getContext("2d");
+    const clip = g => { g.save(); g.beginPath(); g.rect(mx, my, mw, mh); g.clip(); };
+    const plan = replayPlan(), speed = Math.max(1, +$("#rpSpeed").value), dur = plan.dur / speed + 2;
+    const mime = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"].find(m => MediaRecorder.isTypeSupported(m)) || "";
+    const rec = new MediaRecorder(out.captureStream(30), mime ? { mimeType: mime, videoBitsPerSecond: 5e6 } : undefined), parts = [];
+    rec.ondataavailable = e => e.data.size && parts.push(e.data);
+    const stopped = new Promise(r => rec.onstop = r);
+    const frame = tt => {
+      const t = tt * speed; let cur = null;
+      for (const x of plan.legs) {
+        if (t < x.t0) break; cur = x;
+        if (!x.vdone && t >= x.t0 + x.dur) { clip(ag); strokeLeg(ag, P, x.l.draw, x.l.mode, x.d.colour, lineScale, U); ag.restore(); x.vdone = true; }
+      }
+      o.drawImage(acc, 0, 0);
+      if (cur) {
+        clip(o);
+        const f = Math.min(1, (t - cur.t0) / cur.dur), pts = partial(cur.l.draw, cur.cum, f);
+        if (!cur.vdone) strokeLeg(o, P, pts, cur.l.mode, cur.d.colour, lineScale, U);
+        const [x, y] = P(pts[pts.length - 1]);
+        o.font = `${Math.round(34 * U)}px system-ui, "Segoe UI Emoji", "Noto Color Emoji", sans-serif`; o.textAlign = "center"; o.textBaseline = "middle"; o.fillText(RP_ICON[cur.l.mode], x, y);
+        const cap = capText(cur); o.font = `600 ${Math.round(22 * U)}px system-ui, sans-serif`; o.textAlign = "left";
+        // bottom-left of the map (the top is where most northern trips happen)
+        const tw = o.measureText(cap).width, cy = my + mh - 70 * U; o.fillStyle = "rgba(0,0,0,.72)"; o.fillRect(mx + 14 * U, cy, tw + 28 * U, 44 * U);
+        o.fillStyle = "#fff"; o.fillText(cap, mx + 28 * U, cy + 22 * U);
+        o.restore();
+      }
+    };
+    frame(0); rec.start(1000);
+    const t0 = performance.now();
+    await new Promise(done => {
+      const step = () => {
+        const tt = (performance.now() - t0) / 1000;
+        frame(Math.min(tt, dur - 2));
+        xs(`Recording the video… ${Math.min(100, Math.round(tt / dur * 100))}% - keep this screen open`);
+        if (tt >= dur) return done();
+        nextFrame(step);
+      };
+      step();
+    });
+    rec.stop(); await stopped;
+    plan.legs.forEach(x => delete x.vdone);
+    const type = rec.mimeType || mime || "video/webm", ext = /mp4/.test(type) ? "mp4" : "webm";
+    const file = new File([new Blob(parts, { type })], `Trip ${TRIP.from} to ${TRIP.to}.${ext}`, { type: type.split(";")[0] });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    lastFiles = [file];
+    xs(`Saved ${file.name} (${(file.size / 1048576).toFixed(1)} MB, ${Math.round(dur)} s) to Downloads.`);
+    $("#bShare").classList.toggle("hidden", !(navigator.canShare && navigator.canShare({ files: lastFiles })));
+  } catch (e) { xs("Couldn't make the video: " + e.message); }
+  btn.disabled = false;
+}
+
+/* ======================= on this day, your years, everywhere (2a) ======================= */
+async function renderMemories() {
+  const box = $("#memories"); if (!box || !DATA) return;
+  const today = new Date(), md = String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0"), year = String(today.getFullYear());
+  const days = dayIndex(), hits = [...days.keys()].filter(d => d.slice(5) === md && d.slice(0, 4) < year && days.get(d).spot).sort().reverse();
+  if (!hits.length) { box.innerHTML = ""; box.classList.add("hidden"); return; }
+  if (!TRIPS) TRIPS = detectTrips();
+  box.classList.remove("hidden");
+  box.innerHTML = `<h2>📅 On this day</h2>` + hits.map(d => { const x = days.get(d), trip = TRIPS.trips.find(t => t.from <= d && t.to >= d && t.days > 1);
+    const parts = [["🚶", x.walk], ["🚗", x.drive], ["✈", x.fly]].filter(p => p[1] >= 0.5).map(p => `${p[0]} ${f1(p[1])} km`).join(" · ");
+    return `<button class="trip mem" data-d="${d}"${trip ? ` data-f="${trip.from}" data-t="${trip.to}"` : ""}><span class="tn">${d.slice(0, 4)} · <span class="mplace">…</span></span>
+      <span class="small dim">${fmtDate(d)}${parts ? " · " + parts : ""}${trip ? ` · part of a ${trip.days}-day trip` : ""}</span></button>`; }).join("");
+  box.querySelectorAll(".mem").forEach(b => {
+    b.onclick = () => { const d = b.dataset.d;
+      if (b.dataset.f) { $("#dFrom").value = b.dataset.f; $("#dTo").value = b.dataset.t; mapTrip(NAMES[nameKey(b.dataset.f, b.dataset.t)] || TRIPS.trips.find(t => t.from === b.dataset.f)?.name || "On this day, " + d.slice(0, 4)); }
+      else { $("#dFrom").value = $("#dTo").value = d; mapTrip("On this day, " + d.slice(0, 4)); } };
+    placeName(days.get(b.dataset.d).spot, false, true).then(n => { const el = b.querySelector(".mplace"); if (el) el.textContent = n || "somewhere"; });
+  });
+}
+function renderYears() {
+  const box = $("#years"); if (!box || !DATA) return;
+  if (!TRIPS) TRIPS = detectTrips();
+  const ys = new Map(), days = dayIndex();
+  for (const [d, x] of days) { const y = d.slice(0, 4), r = ys.get(y) || { walk: 0, drive: 0, fly: 0, flights: 0, trips: 0, away: 0 }; r.walk += x.walk; r.drive += x.drive; r.fly += x.fly; r.flights += x.flights; ys.set(y, r); }
+  for (const t of TRIPS.trips) { const r = ys.get(t.from.slice(0, 4)); if (r && t.days > 1) { r.trips++; r.away += t.days; } }
+  const rows = [...ys].sort((a, b) => b[0].localeCompare(a[0]));
+  box.innerHTML = `<h2>Your travels by year</h2>` + rows.map(([y, r]) => `<div class="yrow"><b>${y}</b>
+      <span>🚶 ${Math.round(r.walk).toLocaleString()} km</span><span>🚗 ${Math.round(r.drive).toLocaleString()} km</span>
+      ${r.flights ? `<span>✈ ${r.flights} flight${r.flights > 1 ? "s" : ""} · ${Math.round(r.fly).toLocaleString()} km</span>` : ""}
+      ${r.trips ? `<span>🧳 ${r.trips} trip${r.trips > 1 ? "s" : ""} · ${r.away} days away</span>` : ""}</div>`).join("") +
+    `<div class="row" style="margin-top:10px"><button class="btn ghost" id="bEverywhere">🌍 Everywhere I've been</button></div>`;
+  $("#bEverywhere").onclick = showEverywhere;
+}
+/* every journey ever recorded on one map, a colour per year (thinned to ~25 points a journey - it can be millions) */
+async function showEverywhere() {
+  try { await leafletReady(); } catch (e) { return status(e.message); }
+  replayStop(true); TRIP = null;
+  document.body.classList.add("everywhere");
+  $("#tripTitle").textContent = "Everywhere I've been"; $("#tripDates").textContent = `${fmtDate(DATA.from)} – ${fmtDate(DATA.to)}`;
+  if (!document.body.classList.contains("viewing")) { document.body.classList.add("viewing"); history.pushState({ trip: 1 }, ""); }
+  $("#out").classList.remove("hidden"); window.scrollTo(0, 0);
+  if (!map) { map = L.map("map", { minZoom: 1, maxZoom: 19, zoomSnap: 0.25, preferCanvas: true }); L.tileLayer(TILES, { maxZoom: 19, attribution: ATTRIB, crossOrigin: true }).addTo(map); lockControl().addTo(map); }
+  setTimeout(() => map.invalidateSize(), 50);
+  if (layer) layer.remove();
+  layer = L.featureGroup().addTo(map);
+  const years = [...new Set(DATA.legs.map(l => l.day.slice(0, 4)))].sort(), col = y => PALETTE[years.indexOf(y) % PALETTE.length], byYear = new Map();
+  for (const l of DATA.legs) {
+    let pts = l.pts;
+    if (l.mode === "fly") pts = arc(pts[0], pts[pts.length - 1]);
+    else if (pts.length > 25) { const k = pts.length / 24; pts = Array.from({ length: 24 }, (_, i) => pts[Math.floor(i * k)]).concat([pts[pts.length - 1]]); }
+    const y = l.day.slice(0, 4); (byYear.get(y) || byYear.set(y, []).get(y)).push(L.polyline(pts, { ...styleFor(l.mode, col(y), 0.7), opacity: 0.7, interactive: false }).addTo(layer));
+  }
+  const c = $("#chips"); c.innerHTML = "";
+  const add = (html, fn) => { const b = document.createElement("button"); b.className = "chip"; b.innerHTML = html; b.onclick = () => { c.querySelectorAll(".chip").forEach(x => x.classList.toggle("sel", x === b)); fn(); }; c.appendChild(b); return b; };
+  add("🌍 Everything", () => fitBox(layer.getBounds())).classList.add("sel");
+  for (const y of years.slice().reverse()) add(`<span class="sw" style="background:${col(y)}"></span>${y}`, () => fitBox(L.featureGroup(byYear.get(y)).getBounds()));
+  fitBox(layer.getBounds());
+}
+function renameTrip() {
+  if (!TRIP) return;
+  const k = nameKey(TRIP.from, TRIP.to), v = prompt("Name this trip:", $("#tripTitle").textContent);
+  if (v == null) return;
+  const n = v.trim(); if (n) NAMES[k] = n; else delete NAMES[k];
+  try { localStorage.setItem("dsrtrip.names", JSON.stringify(NAMES)); } catch {}
+  $("#tripTitle").textContent = n || "Your trip";
+  const t = TRIPS?.trips.find(x => x.from === TRIP.from && x.to === TRIP.to); if (t) { t.name = n || null; if (!n) tripName(t).then(x => t.name = x); }
+  renderTrips();
 }
 
 /* ======================= little helpers ======================= */
@@ -668,7 +921,7 @@ function showTrip(title) {
   if (map) setTimeout(() => map.invalidateSize(), 50);
 }
 function backToTrips() {
-  document.body.classList.remove("viewing"); $("#out").classList.add("hidden");
+  replayStop(true); document.body.classList.remove("viewing", "everywhere"); $("#out").classList.add("hidden");
   const sel = $("#trips"); if (sel) sel.scrollIntoView(); else window.scrollTo(0, 0);
 }
 $("#bBack").onclick = () => history.state?.trip ? history.back() : backToTrips();
@@ -685,6 +938,10 @@ $("#bHow").onclick = () => alert("Export your Google Timeline (it lives on your 
   "Older Google Takeout downloads work too (Records.json or the Semantic Location History month files - pick several at once).\n\nThen tap Import Timeline file and choose it.");
 $("#bMap").onclick = mapTrip;
 $("#bExport").onclick = doExport;
+$("#bVideo").onclick = exportVideo;
+$("#rpPlay").onclick = replayStart;
+$("#rpStop").onclick = () => replayStop();
+$("#bRename").onclick = renameTrip;
 $("#bShare").onclick = () => lastFiles && navigator.share({ files: lastFiles, title: "Trip map" }).catch(() => {});
 (async () => {
   try { const d = await DB.get("data"); if (d?.legs?.length) { DATA = d; setInfo(); } } catch {}

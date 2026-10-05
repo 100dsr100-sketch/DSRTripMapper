@@ -13,7 +13,6 @@ window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-192.png">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root{--bg:#000;--bg2:#0e0e0e;--gold:#d4af37;--gold2:#efc13f;--line:#3a3215;--dim:#9a937c;--text:#ece6d2}
   *{box-sizing:border-box}
@@ -66,10 +65,21 @@ window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.
   .hidden{display:none!important}
   .leaflet-container{background:#cfd8dc}
   a{color:var(--gold2)}
+  /* 2a */
+  #map{position:relative}
+  .rpicon{font-size:24px;line-height:30px;text-align:center;filter:drop-shadow(0 1px 2px rgba(0,0,0,.7))}
+  .rpcap{position:absolute;left:10px;top:10px;z-index:900;background:rgba(0,0,0,.78);color:#fff;border:1px solid var(--gold);border-radius:10px;padding:6px 10px;font-size:14px;font-weight:600;max-width:calc(100% - 70px);pointer-events:none}
+  .rpbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 2px}
+  .yrow{display:flex;flex-wrap:wrap;gap:4px 14px;padding:7px 0;border-bottom:1px solid #222;font-size:13.5px;color:var(--dim)}
+  .yrow b{color:var(--gold2);min-width:44px}
+  .tripbar .grow{flex:1}
+  .iconbtn{display:inline-flex;flex-direction:column;align-items:center;gap:1px;line-height:1;background:none;border:1px solid var(--gold);color:var(--gold2);border-radius:10px;padding:5px 8px;font-size:16px;cursor:pointer}
+  .iconbtn::after{content:attr(data-l);font-size:9px;font-weight:600;opacity:.85}
+  body.everywhere .tripOnly{display:none!important}
 </style>
 </head>
 <body>
-<header><h1>DSR Trip Mapper</h1><span class="ver">1k</span></header>
+<header><h1>DSR Trip Mapper</h1><span class="ver">2a</span></header>
 <main>
   <div class="card pick">
     <h2>1 · Your Google Timeline</h2>
@@ -80,6 +90,8 @@ window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.
     <div class="small dim" id="dataInfo" style="margin-top:8px">No Timeline loaded yet. It stays on this device - nothing is uploaded.</div>
     <input type="file" id="file" accept=".json,application/json" multiple class="hidden">
   </div>
+
+  <div class="card pick hidden" id="memories"></div>
 
   <div class="card pick">
     <h2>2 · The trip</h2>
@@ -93,10 +105,14 @@ window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.
     <div class="status" id="status"></div>
   </div>
 
+  <div class="card pick" id="years"></div>
+
   <div id="out" class="hidden">
-    <div class="tripbar"><button class="btn ghost" id="bBack">‹ All trips</button><div><div id="tripTitle"></div><div class="small dim" id="tripDates"></div></div></div>
+    <div class="tripbar"><button class="btn ghost" id="bBack">‹ All trips</button><div class="grow"><div id="tripTitle"></div><div class="small dim" id="tripDates"></div></div><button class="iconbtn tripOnly" id="bRename" data-l="Rename" title="Give this trip your own name">✎</button></div>
     <div class="status" id="status2" style="margin:0 0 6px"></div>
-    <div id="map"></div>
+    <div id="map"><div class="rpcap hidden" id="rpCap"></div></div>
+    <div class="rpbar tripOnly"><button class="btn" id="rpPlay">▶ Replay the trip</button><button class="btn ghost hidden" id="rpStop">■ Stop</button>
+      <label>Speed <select id="rpSpeed"><option value="0.5">Slow</option><option value="1" selected>Normal</option><option value="2">Fast</option></select></label></div>
     <div class="chips" id="chips"></div>
     <div class="legend">
       <span><svg width="40" height="8"><line x1="3" y1="4" x2="37" y2="4" stroke="#bbb" stroke-width="4" stroke-linecap="round" stroke-dasharray="0.1 7"/></svg>Walked</span>
@@ -105,7 +121,7 @@ window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.
       <span>Each day has its own colour</span>
     </div>
 
-    <div class="card" style="margin-top:12px">
+    <div class="card tripOnly" style="margin-top:12px">
       <h2>Export</h2>
       <div class="row">
         <label>Format <select id="xFmt"><option value="pdf">PDF (map + summary)</option><option value="jpg">JPEG pictures</option></select></label>
@@ -113,19 +129,18 @@ window.DSR_MOVE = { name: "DSR Trip Mapper", to: "https://dsr-trip-mapper.pages.
         <label style="display:flex;align-items:center;gap:6px" id="xRegionsRow" class="hidden"><input type="checkbox" id="xRegions" checked> <span id="xRegionsLbl">Add a map of each country / area</span></label>
         <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="xDays"> Add a close-up map of each day</label>
         <button class="btn" id="bExport">Export</button>
+        <button class="btn ghost" id="bVideo" title="The replay as a video for Messenger, WhatsApp…">🎬 Trip video</button>
         <button class="btn ghost hidden" id="bShare">Share…</button>
       </div>
       <div class="status" id="xStatus"></div>
     </div>
 
-    <div class="card">
+    <div class="card tripOnly">
       <h2>Summary</h2>
       <div id="summary"></div>
     </div>
   </div>
 </main>
-<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="app.js?v=1h"></script>
+<script src="app.js?v=2a"></script>
 </body>
 </html>
